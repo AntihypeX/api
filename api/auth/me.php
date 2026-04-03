@@ -1,18 +1,18 @@
 <?php
 declare(strict_types=1);
 
-require_once __DIR__ . '/bootstrap.php';
+require_once __DIR__ . '/common.php';
 
-requireMethod('GET');
+api_require_method('GET');
 
-$user = getAuthenticatedUser();
+$user = api_current_user();
 
 if ($user === null) {
-    sendJson([
+    api_response([
         'message' => 'Пользователь не авторизован.',
     ], 401);
 }
 
-sendJson([
+api_response([
     'user' => $user,
 ]);
