@@ -49,7 +49,7 @@ function dbConnect(): mysqli
     $config = getConfig();
 
     $host = $config['DB_HOST'] ?? '127.0.0.1';
-    $port = (int)($config['DB_PORT'] ?? 3306);
+    $port = (int) ($config['DB_PORT'] ?? 3306);
     $name = $config['DB_NAME'] ?? '';
     $user = $config['DB_USER'] ?? '';
     $pass = $config['DB_PASS'] ?? '';
@@ -64,3 +64,4 @@ function dbConnect(): mysqli
 
     return $link;
 }
+
