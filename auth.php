@@ -1,4 +1,4 @@
 <?php
 declare(strict_types=1);
 
-require __DIR__ . '/api/login.php';
+require __DIR__ . '/api/auth/login.php';

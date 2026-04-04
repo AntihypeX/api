@@ -1,34 +1,31 @@
 <?php
 declare(strict_types=1);
 
-require_once __DIR__ . '../common.php';
+require_once __DIR__ . '/../common.php';
 
 api_require_method('POST');
 
 $payload = api_input();
 $username = trim((string) ($payload['username'] ?? ''));
 $password = (string) ($payload['password'] ?? '');
-$emailCheck = (string) ($payload['email' ?? '']);
 
-if ($username === '' && $email === '' || $password === '') {
+if ($username === '' || $password === '') {
     api_response([
-        'message' => 'Укажите имя пользователя или почту и пароль.',
+        'message' => 'Укажите имя пользователя и пароль.',
     ], 422);
 }
 
-$user = api_find_user_by_username($username);
+$user = api_find_user_for_login($username);
 
 if (!$user) {
     api_response([
-        'message' => 'Пользователь или почта не найдена.',
+        'message' => 'Пользователь не найден.',
     ], 404);
 }
 
-$email = api_find_email_by_emailCheck($emailCheck);
-
-if ($password !== '123') {
+if (!password_verify($password, (string) $user['password'])) {
     api_response([
-        'message' => 'Пользователь или почта не найдена.',
+        'message' => 'Неверный пароль.',
     ], 401);
 }
 

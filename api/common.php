@@ -116,14 +116,6 @@ function api_login_user(array $user): void
     $_SESSION['login_time'] = time();
 }
 
-function api_login_email(array $email): void
-{
-    session_regenerate_id(true);
-    $_SESSION['user_id'] = (int) $email['id'];
-    $_SESSION['emailCheck'] = (string) $email['EmailCheck'];
-    $_SESSION['login_time'] = time();
-}
-
 function api_logout_user(): void
 {
     $_SESSION = [];
@@ -168,12 +160,13 @@ function api_find_user_by_username(string $username): ?array
     }
 
     $user = null;
-    mysqli_stmt_bind_result($stmt, $userId, $dbUsername);
+    mysqli_stmt_bind_result($stmt, $userId, $dbUsername, $dbEmail);
 
     if (mysqli_stmt_fetch($stmt)) {
         $user = [
             'id' => $userId,
             'username' => $dbUsername,
+            'email' => $dbEmail,
         ];
     }
 
@@ -181,12 +174,15 @@ function api_find_user_by_username(string $username): ?array
     mysqli_close($link);
 
     return $user;
-};
+}
 
-function api_find_email_by_emailCheck(string $emailCheck): ?array
+function api_find_user_for_login(string $login): ?array
 {
     $link = dbConnect();
-    $stmt = mysqli_prepare($link, 'SELECT id, username, email FROM accounts WHERE email = ? LIMIT 1');
+    $stmt = mysqli_prepare(
+        $link,
+        'SELECT id, username, email, password FROM accounts WHERE username = ? OR email = ? LIMIT 1'
+    );
 
     if ($stmt === false) {
         mysqli_close($link);
@@ -195,7 +191,7 @@ function api_find_email_by_emailCheck(string $emailCheck): ?array
         ], 500);
     }
 
-    mysqli_stmt_bind_param($stmt, 's', $emailCheck);
+    mysqli_stmt_bind_param($stmt, 'ss', $login, $login);
 
     if (!mysqli_stmt_execute($stmt)) {
         mysqli_stmt_close($stmt);
@@ -205,34 +201,44 @@ function api_find_email_by_emailCheck(string $emailCheck): ?array
         ], 500);
     }
 
-    $email = null;
-    mysqli_stmt_bind_result($stmt, $userId, $dbEmail);
+    $user = null;
+    mysqli_stmt_bind_result($stmt, $userId, $dbUsername, $dbEmail, $dbPassword);
 
     if (mysqli_stmt_fetch($stmt)) {
         $user = [
             'id' => $userId,
-            'emailCheck' => $dbEmail,
+            'username' => $dbUsername,
+            'email' => $dbEmail,
+            'password' => $dbPassword,
         ];
     }
 
     mysqli_stmt_close($stmt);
     mysqli_close($link);
 
-    return $email;
+    return $user;
 }
 
 function api_calculate_age(string $birthdate): ?int
 {
     $birthdate = trim($birthdate);
+    $formats = ['Y-m-d', 'd.m.Y'];
+    $date = null;
 
-    $date = DateTime::createFromFormat('d.m.Y', $birthdate);
-    $errors = DateTime::getLastErrors();
+    foreach ($formats as $format) {
+        $candidate = DateTime::createFromFormat($format, $birthdate);
+        $errors = DateTime::getLastErrors();
 
-    if (
-        $date === false ||
-        $errors['warning_count'] > 0 ||
-        $errors['error_count'] > 0
-    ) {
+        $hasErrors = is_array($errors)
+            && (($errors['warning_count'] ?? 0) > 0 || ($errors['error_count'] ?? 0) > 0);
+
+        if ($candidate !== false && !$hasErrors) {
+            $date = $candidate;
+            break;
+        }
+    }
+
+    if (!$date instanceof DateTime) {
         return null;
     }
 
@@ -246,17 +252,20 @@ function api_calculate_age(string $birthdate): ?int
     return $age;
 }
 
-function api_register($username, $email, $age, $password, $repPassword): void
+function api_register(
+    string $username,
+    string $email,
+    string $birthdate,
+    string $password,
+    string $repPassword
+): void
 {
-    api_require_method('POST');
-
     $link = dbConnect();
-
-    $username = trim($_POST['username'] ?? '');
-    $email = trim($_POST['email'] ?? '');
-    $birthdate = trim($_POST['birthdate'] ?? '');
-    $password = (string) ($_POST['password'] ?? '');
-    $repPassword = (string) ($_POST['repPassword'] ?? '');
+    $username = trim($username);
+    $email = trim($email);
+    $birthdate = trim($birthdate);
+    $password = (string) $password;
+    $repPassword = (string) $repPassword;
 
     if ($username === '' || $email === '' || $birthdate === '' || $password === '') {
         mysqli_close($link);
@@ -277,7 +286,7 @@ function api_register($username, $email, $age, $password, $repPassword): void
     if ($age === null) {
         mysqli_close($link);
         api_response([
-            'message' => 'Некорректная дата рождения. Используйте формат dd.mm.yyyy.',
+            'message' => 'Некорректная дата рождения. Используйте формат YYYY-MM-DD или DD.MM.YYYY.',
         ], 400);
     }
 
