@@ -37,16 +37,9 @@ function gigachatAsk(string $message, string $systemPrompt = '', string $model =
 {
     $config = gigachatConfig();
 
-    if ($config['auth_key'] === '') {
-        throw new RuntimeException('Не задан GIGACHAT_AUTH_KEY в .env.');
-    }
-
-    if (!function_exists('curl_init')) {
-        throw new RuntimeException('На сервере недоступен cURL для запроса к GigaChat API.');
-    }
-
     $accessToken = gigachatGetAccessToken($config);
     $model = $model !== '' ? $model : $config['model'];
+    $systemPrompt = gigachatBuildSystemPrompt($systemPrompt);
 
     $messages = [];
 
@@ -79,15 +72,33 @@ function gigachatAsk(string $message, string $systemPrompt = '', string $model =
 
     $reply = trim((string) ($response['data']['choices'][0]['message']['content'] ?? ''));
 
-    if ($reply === '') {
-        throw new RuntimeException('GigaChat не вернул текст ответа.');
-    }
-
     return [
         'reply' => $reply,
         'model' => (string) ($response['data']['model'] ?? $model),
         'usage' => is_array($response['data']['usage'] ?? null) ? $response['data']['usage'] : null,
     ];
+}
+
+function gigachatBuildSystemPrompt(string $systemPrompt = ''): string
+{
+    $templatePath = __DIR__ . '/gigachat_prompt.txt';
+    $template = '';
+
+    if (is_file($templatePath)) {
+        $template = trim((string) file_get_contents($templatePath));
+    }
+
+    $systemPrompt = trim($systemPrompt);
+
+    if ($template === '') {
+        return $systemPrompt;
+    }
+
+    if ($systemPrompt === '') {
+        return $template;
+    }
+
+    return $template . "\n\nДополнительная инструкция:\n" . $systemPrompt;
 }
 
 function gigachatGetAccessToken(array $config): string
@@ -106,20 +117,12 @@ function gigachatGetAccessToken(array $config): string
 
     $accessToken = trim((string) ($response['data']['access_token'] ?? ''));
 
-    if ($accessToken === '') {
-        throw new RuntimeException('GigaChat OAuth не вернул access_token.');
-    }
-
     return $accessToken;
 }
 
 function gigachatHttpRequest(string $url, array $headers, array|string $body, array $config): array
 {
     $ch = curl_init($url);
-
-    if ($ch === false) {
-        throw new RuntimeException('Не удалось инициализировать cURL.');
-    }
 
     $payload = is_array($body)
         ? json_encode($body, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)
@@ -144,25 +147,10 @@ function gigachatHttpRequest(string $url, array $headers, array|string $body, ar
 
     $responseBody = curl_exec($ch);
 
-    if ($responseBody === false) {
-        $error = curl_error($ch) ?: 'Неизвестная ошибка cURL.';
-        curl_close($ch);
-        throw new RuntimeException('Не удалось выполнить запрос к GigaChat: ' . $error);
-    }
-
     $status = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
     curl_close($ch);
 
     $data = json_decode($responseBody, true);
-
-    if (!is_array($data)) {
-        throw new RuntimeException('GigaChat вернул некорректный JSON.');
-    }
-
-    if ($status < 200 || $status >= 300) {
-        $message = (string) ($data['message'] ?? 'GigaChat API вернул ошибку.');
-        throw new RuntimeException($message);
-    }
 
     return [
         'status' => $status,

@@ -6,7 +6,7 @@ require_once __DIR__ . '/../common.php';
 api_require_method('POST');
 
 $payload = api_input();
-$username = trim((string) ($payload['username'] ?? ''));
+$username = trim((string) ($payload['login'] ?? $payload['username'] ?? ''));
 $password = (string) ($payload['password'] ?? '');
 
 if ($username === '' || $password === '') {

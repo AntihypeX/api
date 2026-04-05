@@ -7,10 +7,8 @@ api_require_method('POST');
 
 $payload = api_input();
 
-$username = trim((string) ($payload['username'] ?? ''));
-$email = trim((string) ($payload['email'] ?? ''));
-$birthdate = trim((string) ($payload['birthdate'] ?? ''));
+$login = trim((string) ($payload['login'] ?? $payload['username'] ?? ''));
 $password = (string) ($payload['password'] ?? '');
-$repPassword = (string) ($payload['repPassword'] ?? '');
+$password2 = (string) ($payload['password2'] ?? $payload['repPassword'] ?? '');
 
-api_register($username, $email, $birthdate, $password, $repPassword);
+api_register($login, $password, $password2);

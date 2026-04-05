@@ -137,10 +137,85 @@ function api_logout_user(): void
     session_destroy();
 }
 
+function api_get_accounts_columns(mysqli $link): array
+{
+    $result = mysqli_query($link, 'SHOW COLUMNS FROM accounts');
+
+    if ($result === false) {
+        mysqli_close($link);
+        api_response([
+            'message' => 'Не удалось получить структуру таблицы accounts.',
+        ], 500);
+    }
+
+    $columns = [];
+
+    while ($row = mysqli_fetch_assoc($result)) {
+        $field = (string) ($row['Field'] ?? '');
+
+        if ($field !== '') {
+            $columns[$field] = $row;
+        }
+    }
+
+    mysqli_free_result($result);
+
+    return $columns;
+}
+
+function api_bind_params(mysqli_stmt $stmt, string $types, array $values): void
+{
+    $references = [];
+
+    foreach ($values as $index => $value) {
+        $references[$index] = &$values[$index];
+    }
+
+    array_unshift($references, $types);
+
+    if (!call_user_func_array([$stmt, 'bind_param'], $references)) {
+        mysqli_stmt_close($stmt);
+        api_response([
+            'message' => 'Не удалось привязать параметры запроса.',
+        ], 500);
+    }
+}
+
+function api_fetch_single_row(mysqli_stmt $stmt, mysqli $link): ?array
+{
+    $result = mysqli_stmt_get_result($stmt);
+
+    if ($result === false) {
+        mysqli_stmt_close($stmt);
+        mysqli_close($link);
+        api_response([
+            'message' => 'Не удалось получить результат запроса к базе данных.',
+        ], 500);
+    }
+
+    $row = mysqli_fetch_assoc($result);
+    mysqli_free_result($result);
+
+    return $row === null ? null : $row;
+}
+
+function api_placeholder_email(string $username): string
+{
+    $localPart = strtolower($username);
+    $localPart = preg_replace('/[^a-z0-9._-]+/i', '-', $localPart) ?? '';
+    $localPart = trim($localPart, '.-');
+
+    if ($localPart === '') {
+        $localPart = 'user';
+    }
+
+    return $localPart . '+' . substr(sha1($username), 0, 8) . '@placeholder.local';
+}
+
 function api_find_user_by_username(string $username): ?array
 {
     $link = dbConnect();
-    $stmt = mysqli_prepare($link, 'SELECT id, username, email FROM accounts WHERE username = ? LIMIT 1');
+    $stmt = mysqli_prepare($link, 'SELECT id, name FROM users WHERE name = ? LIMIT 1');
 
     if ($stmt === false) {
         mysqli_close($link);
@@ -159,30 +234,25 @@ function api_find_user_by_username(string $username): ?array
         ], 500);
     }
 
-    $user = null;
-    mysqli_stmt_bind_result($stmt, $userId, $dbUsername, $dbEmail);
-
-    if (mysqli_stmt_fetch($stmt)) {
-        $user = [
-            'id' => $userId,
-            'username' => $dbUsername,
-            'email' => $dbEmail,
-        ];
-    }
+    $row = api_fetch_single_row($stmt, $link);
 
     mysqli_stmt_close($stmt);
     mysqli_close($link);
 
-    return $user;
+    if ($row === null) {
+        return null;
+    }
+
+    return [
+        'id' => (int) ($row['id'] ?? 0),
+        'username' => (string) ($row['name'] ?? ''),
+    ];
 }
 
 function api_find_user_for_login(string $login): ?array
 {
     $link = dbConnect();
-    $stmt = mysqli_prepare(
-        $link,
-        'SELECT id, username, email, password FROM accounts WHERE username = ? OR email = ? LIMIT 1'
-    );
+    $stmt = mysqli_prepare($link, 'SELECT id, name, password FROM users WHERE name = ? LIMIT 1');
 
     if ($stmt === false) {
         mysqli_close($link);
@@ -191,7 +261,7 @@ function api_find_user_for_login(string $login): ?array
         ], 500);
     }
 
-    mysqli_stmt_bind_param($stmt, 'ss', $login, $login);
+    mysqli_stmt_bind_param($stmt, 's', $login);
 
     if (!mysqli_stmt_execute($stmt)) {
         mysqli_stmt_close($stmt);
@@ -201,98 +271,46 @@ function api_find_user_for_login(string $login): ?array
         ], 500);
     }
 
-    $user = null;
-    mysqli_stmt_bind_result($stmt, $userId, $dbUsername, $dbEmail, $dbPassword);
-
-    if (mysqli_stmt_fetch($stmt)) {
-        $user = [
-            'id' => $userId,
-            'username' => $dbUsername,
-            'email' => $dbEmail,
-            'password' => $dbPassword,
-        ];
-    }
+    $row = api_fetch_single_row($stmt, $link);
 
     mysqli_stmt_close($stmt);
     mysqli_close($link);
 
-    return $user;
-}
-
-function api_calculate_age(string $birthdate): ?int
-{
-    $birthdate = trim($birthdate);
-    $formats = ['Y-m-d', 'd.m.Y'];
-    $date = null;
-
-    foreach ($formats as $format) {
-        $candidate = DateTime::createFromFormat($format, $birthdate);
-        $errors = DateTime::getLastErrors();
-
-        $hasErrors = is_array($errors)
-            && (($errors['warning_count'] ?? 0) > 0 || ($errors['error_count'] ?? 0) > 0);
-
-        if ($candidate !== false && !$hasErrors) {
-            $date = $candidate;
-            break;
-        }
-    }
-
-    if (!$date instanceof DateTime) {
+    if ($row === null) {
         return null;
     }
 
-    $today = new DateTime('today');
-    $age = $today->diff($date)->y;
-
-    if ($age < 0 || $age > 120) {
-        return null;
-    }
-
-    return $age;
+    return [
+        'id' => (int) ($row['id'] ?? 0),
+        'username' => (string) ($row['name'] ?? ''),
+        'password' => (string) ($row['password'] ?? ''),
+    ];
 }
 
-function api_register(
-    string $username,
-    string $email,
-    string $birthdate,
-    string $password,
-    string $repPassword
-): void
+function api_register(string $username, string $password, string $repPassword): void
 {
     $link = dbConnect();
     $username = trim($username);
-    $email = trim($email);
-    $birthdate = trim($birthdate);
     $password = (string) $password;
     $repPassword = (string) $repPassword;
 
-    if ($username === '' || $email === '' || $birthdate === '' || $password === '') {
+    if ($username === '' || $password === '' || $repPassword === '') {
         mysqli_close($link);
         api_response([
-            'message' => 'Заполните все обязательные поля.',
+            'message' => 'Заполните логин и оба поля пароля.',
         ], 400);
     }
 
     if ($password !== $repPassword) {
         mysqli_close($link);
         api_response([
-            'message' => 'Пароли должны быть одинаковыми',
-        ], 400);
-    }
-
-    $age = api_calculate_age($birthdate);
-
-    if ($age === null) {
-        mysqli_close($link);
-        api_response([
-            'message' => 'Некорректная дата рождения. Используйте формат YYYY-MM-DD или DD.MM.YYYY.',
+            'message' => 'Пароли должны совпадать.',
         ], 400);
     }
 
     $checkStmt = mysqli_prepare(
         $link,
-        'SELECT id, username, email FROM accounts WHERE email = ? OR username = ? LIMIT 1'
+        'SELECT id FROM users WHERE name = ? LIMIT 1'
     );
 
     if ($checkStmt === false) {
@@ -302,7 +320,7 @@ function api_register(
         ], 500);
     }
 
-    mysqli_stmt_bind_param($checkStmt, 'ss', $email, $username);
+    mysqli_stmt_bind_param($checkStmt, 's', $username);
 
     if (!mysqli_stmt_execute($checkStmt)) {
         mysqli_stmt_close($checkStmt);
@@ -312,45 +330,18 @@ function api_register(
         ], 500);
     }
 
-    $checkResult = mysqli_stmt_get_result($checkStmt);
+    $existingUser = api_fetch_single_row($checkStmt, $link);
+    mysqli_stmt_close($checkStmt);
 
-    if ($checkResult === false) {
-        mysqli_stmt_close($checkStmt);
+    if ($existingUser !== null) {
         mysqli_close($link);
         api_response([
-            'message' => 'Не удалось получить результат проверки.',
-        ], 500);
-    }
-
-    if (mysqli_num_rows($checkResult) > 0) {
-        $existingUser = mysqli_fetch_assoc($checkResult);
-
-        mysqli_free_result($checkResult);
-        mysqli_stmt_close($checkStmt);
-        mysqli_close($link);
-
-        $message = 'Пользователь уже существует.';
-
-        if (($existingUser['email'] ?? '') === $email) {
-            $message = 'Пользователь с таким email уже существует.';
-        } elseif (($existingUser['username'] ?? '') === $username) {
-            $message = 'Пользователь с таким username уже существует.';
-        }
-
-        api_response([
-            'message' => $message,
+            'message' => 'Пользователь с таким логином уже существует.',
         ], 409);
     }
 
-    mysqli_free_result($checkResult);
-    mysqli_stmt_close($checkStmt);
-
     $passwordHash = password_hash($password, PASSWORD_DEFAULT);
-
-    $insertStmt = mysqli_prepare(
-        $link,
-        'INSERT INTO accounts (username, email, age, password) VALUES (?, ?, ?, ?)'
-    );
+    $insertStmt = mysqli_prepare($link, 'INSERT INTO users (name, password) VALUES (?, ?)');
 
     if ($insertStmt === false) {
         mysqli_close($link);
@@ -359,7 +350,7 @@ function api_register(
         ], 500);
     }
 
-    mysqli_stmt_bind_param($insertStmt, 'ssis', $username, $email, $age, $passwordHash);
+    mysqli_stmt_bind_param($insertStmt, 'ss', $username, $passwordHash);
 
     if (!mysqli_stmt_execute($insertStmt)) {
         mysqli_stmt_close($insertStmt);
@@ -382,12 +373,9 @@ function api_register(
 
     api_response([
         'message' => 'Регистрация успешна.',
-        'redirect' => '/welcome.php',
         'user' => [
             'id' => $newUserId,
             'username' => $username,
-            'email' => $email,
-            'age' => $age,
         ],
     ], 201);
 }
