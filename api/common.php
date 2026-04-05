@@ -341,7 +341,7 @@ function api_register(string $username, string $password, string $repPassword): 
     }
 
     $passwordHash = password_hash($password, PASSWORD_DEFAULT);
-    $insertStmt = mysqli_prepare($link, 'INSERT INTO users (name, password) VALUES (?, ?)');
+    $insertStmt = mysqli_prepare($link, 'INSERT INTO users (id, name, password) VALUES (NULL, ?, ?)');
 
     if ($insertStmt === false) {
         mysqli_close($link);
